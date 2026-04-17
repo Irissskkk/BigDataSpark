@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: PG_sparklab
+    environment:
+      POSTGRES_DB: db_postgres
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./data:/data
+      - ./sql_init:/docker-entrypoint-initdb.d
+    networks:
+      - br-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d db_postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: db_clickhouse
+    environment:
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_PASSWORD=password
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+    volumes:
+      - ch_data:/var/lib/clickhouse
+    networks:
+      - br-net
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    user: root
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark:/opt/spark/jobs
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    networks:
+      - br-net
+
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    user: root
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    volumes:
+      - ./spark:/opt/spark/jobs
+    networks:
+      - br-net
+
+  spark-submit:
+    image: apache/spark:3.5.0
+    container_name: spark-submit
+    volumes:
+      - ./spark:/opt/spark/jobs
+    user: root
+    entrypoint: ["/bin/bash", "/opt/spark/jobs/run.sh"]
+    depends_on:
+      spark-master:
+        condition: service_started
+      spark-worker:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - br-net
+
+
+
+volumes:
+  pg_data:
+  ch_data:
+
+networks:
+  br-net:
+    driver: bridge
